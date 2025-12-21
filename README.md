@@ -15,7 +15,7 @@
 
 ---
 
-## 🧩 Dependencies (minimal)
+## 🧩 Dependencies 
 - `gcc`, `pkg-config`  
 - `libgtk-3-dev`, `libgdk-pixbuf2.0-dev`  
 - `libsodium-dev`  
@@ -35,17 +35,17 @@ sudo dnf install gcc pkgconf-pkg-config \
 gtk3-devel gdk-pixbuf2-devel \
 libsodium-devel perl-Image-ExifTool
 ```
-** 🛠️ Build**
+## 🛠️ Build
 ```bash
 gcc iv_encrypt.c -o iv_encrypt \
 `pkg-config --cflags --libs gtk+-3.0 gdk-pixbuf-2.0 libexif` \
 -lsodium -lm
 ```
-** ▶️ Run**
+## ▶️ Run
 ```bash
 ./iv_encrypt
 ```
-**Or open an image directly**
+## Or open an image directly
 ```bash
 ./iv_encrypt image.jpg
 ```

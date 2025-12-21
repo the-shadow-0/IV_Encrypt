@@ -39,3 +39,11 @@ sudo apt install build-essential pkg-config \
 libgtk-3-dev libgdk-pixbuf2.0-dev \
 libsodium-dev libexif-dev \
 libimage-exiftool-perl
+```
+### Fedora
+```bash
+sudo dnf install gcc pkgconf-pkg-config \
+gtk3-devel gdk-pixbuf2-devel \
+libsodium-devel perl-Image-ExifTool
+```
+

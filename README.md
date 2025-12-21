@@ -22,63 +22,30 @@
 - `libexif-dev` *(optional)*  
 - `exiftool` (runtime)
 
-**Ubuntu / Debian example**
+**Ubuntu / Debian**
 ```bash
 sudo apt install build-essential pkg-config \
 libgtk-3-dev libgdk-pixbuf2.0-dev libsodium-dev libexif-dev \
 libimage-exiftool-perl
 ```
 
-Built with **GTK3**, **GdkPixbuf**, **libsodium**, and **exiftool**.
-
----
-
-## Features
-- Fixed-size modern GTK interface (1200×600)
-- Fast image preview without resizing the app
-- Read & edit metadata of images (JPEG, PNG, etc.)
-- Metadata is written **directly into the image**
-- Strong encryption using libsodium
-- Steganography using LSB (Least Significant Bit)
-- Only users with the correct password can decrypt hidden messages
-
----
-
-## Dependencies
-
-### Build dependencies
-- gcc
-- pkg-config
-- libgtk-3-dev
-- libgdk-pixbuf2.0-dev
-- libsodium-dev
-- libexif-dev
-- exiftool (runtime)
-
-### Ubuntu / Debian
-```bash
-sudo apt install build-essential pkg-config \
-libgtk-3-dev libgdk-pixbuf2.0-dev \
-libsodium-dev libexif-dev \
-libimage-exiftool-perl
-```
-### Fedora
+**Fedora**
 ```bash
 sudo dnf install gcc pkgconf-pkg-config \
 gtk3-devel gdk-pixbuf2-devel \
 libsodium-devel perl-Image-ExifTool
 ```
-### Build
+**Build**
 ```bash
 gcc iv_encrypt.c -o iv_encrypt \
 `pkg-config --cflags --libs gtk+-3.0 gdk-pixbuf-2.0 libexif` \
 -lsodium -lm
 ```
-### Run
+**Run**
 ```bash
 ./iv_encrypt
 ```
-Or open an image directly:
+**Or open an image directly**
 ```bash
 ./iv_encrypt image.jpg
 ```

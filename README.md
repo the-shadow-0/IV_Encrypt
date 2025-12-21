@@ -72,3 +72,17 @@ Or open an image directly:
  - The resulting image looks normal but contains hidden data
 
  - Without the password, the message cannot be decrypted
+
+### Notes
+
+ - Stego images are saved as PNG to avoid data loss
+
+ - If the password is lost, the message is unrecoverable
+
+ - Always keep backups of original images
+
+### License
+
+MIT License
+
+

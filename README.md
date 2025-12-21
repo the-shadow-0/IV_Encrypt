@@ -46,4 +46,11 @@ sudo dnf install gcc pkgconf-pkg-config \
 gtk3-devel gdk-pixbuf2-devel \
 libsodium-devel perl-Image-ExifTool
 ```
+### Build
+```bash
+gcc iv_encrypt.c -o iv_encrypt \
+`pkg-config --cflags --libs gtk+-3.0 gdk-pixbuf-2.0 libexif` \
+-lsodium -lm
+```
+
 

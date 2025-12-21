@@ -35,13 +35,13 @@ sudo dnf install gcc pkgconf-pkg-config \
 gtk3-devel gdk-pixbuf2-devel \
 libsodium-devel perl-Image-ExifTool
 ```
-**Build**
+** 🛠️ Build**
 ```bash
 gcc iv_encrypt.c -o iv_encrypt \
 `pkg-config --cflags --libs gtk+-3.0 gdk-pixbuf-2.0 libexif` \
 -lsodium -lm
 ```
-**Run**
+** ▶️ Run**
 ```bash
 ./iv_encrypt
 ```
@@ -50,7 +50,7 @@ gcc iv_encrypt.c -o iv_encrypt \
 ./iv_encrypt image.jpg
 ```
 
-### How It Works :
+## 🔐 How It Works :
 
  - Metadata is read and written using exiftool
 
@@ -62,7 +62,7 @@ gcc iv_encrypt.c -o iv_encrypt \
 
  - Without the password, the message cannot be decrypted
 
-### Notes
+## 💡 Notes
 
  - Stego images are saved as PNG to avoid data loss
 
@@ -70,11 +70,11 @@ gcc iv_encrypt.c -o iv_encrypt \
 
  - Always keep backups of original images
 
-### License
+## 📜 License
 
 MIT License
 
-### Credits
+## 🙏 Credits
 
  - GTK & GdkPixbuf
 

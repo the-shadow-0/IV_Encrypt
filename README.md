@@ -52,5 +52,11 @@ gcc iv_encrypt.c -o iv_encrypt \
 `pkg-config --cflags --libs gtk+-3.0 gdk-pixbuf-2.0 libexif` \
 -lsodium -lm
 ```
-
-
+### Run
+```bash
+./iv_encrypt
+```
+Or open an image directly:
+```bash
+./iv_encrypt image.jpg
+```

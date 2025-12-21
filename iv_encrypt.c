@@ -1,4 +1,4 @@
-// iv_encrypt.c developed by BENMANSER Noureddine aka (the-shadow-0)
+// iv_encrypt.c developed by BENMANSER Noureddine aka (the-shadow-0
 // Built on Linux, shared with love
 // Dependencies: libgtk-3-dev gdk-pixbuf2.0-dev libsodium-dev libexif-dev exiftool
 
@@ -925,3 +925,4 @@ int main(int argc, char **argv) {
     g_free(app);
     return 0;
 }
+

@@ -61,14 +61,14 @@ Or open an image directly:
 ./iv_encrypt image.jpg
 ```
 
-How It Works :
+### How It Works :
 
-    Metadata is read and written using exiftool
+ - Metadata is read and written using exiftool
 
-Messages are encrypted using libsodium
+ - Messages are encrypted using libsodium
 
-Encrypted data is embedded in image pixels (LSB steganography)
+ - Encrypted data is embedded in image pixels (LSB steganography)
 
-The resulting image looks normal but contains hidden data
+ - The resulting image looks normal but contains hidden data
 
-Without the password, the message cannot be decrypted
+ - Without the password, the message cannot be decrypted

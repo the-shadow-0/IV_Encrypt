@@ -1,11 +1,33 @@
-# IV_Encrypt  
-*With love for the Linux community ❤️*
+# IV_Encrypt  🐧 ❤️  
+![License](https://img.shields.io/badge/license-MIT-green) ![Language](https://img.shields.io/badge/language-C-blue) ![Platform](https://img.shields.io/badge/platform-Linux-black)
 
-IV_Encrypt is a lightweight Linux application written in **C** that allows you to:
-- View images (including 4K+)
-- Read and modify image metadata directly inside the image
-- Encrypt and hide secret messages inside images (steganography)
-- Decrypt hidden messages using a password
+**Lightweight Linux image viewer · metadata editor · encrypted steganography**  
+*With love for the Linux community.*
+
+---
+
+## ⚡ Features
+- 🖼️ View images (4K+), fixed 1200×600 UI with a scrollable preview  
+- 📝 Read & edit image metadata (written back into the image via `exiftool`)  
+- 🔒 Encrypt messages (libsodium) and hide them in image pixels (LSB)  
+- 🔍 Extract & decrypt messages with the correct password  
+- ⚙️ Non-blocking metadata write (worker thread + progress spinner)
+
+---
+
+## 🧩 Dependencies (minimal)
+- `gcc`, `pkg-config`  
+- `libgtk-3-dev`, `libgdk-pixbuf2.0-dev`  
+- `libsodium-dev`  
+- `libexif-dev` *(optional)*  
+- `exiftool` (runtime)
+
+**Ubuntu / Debian example**
+```bash
+sudo apt install build-essential pkg-config \
+libgtk-3-dev libgdk-pixbuf2.0-dev libsodium-dev libexif-dev \
+libimage-exiftool-perl
+```
 
 Built with **GTK3**, **GdkPixbuf**, **libsodium**, and **exiftool**.
 
@@ -84,5 +106,15 @@ Or open an image directly:
 ### License
 
 MIT License
+
+### Credits
+
+ - GTK & GdkPixbuf
+
+ - libsodium
+
+ - exiftool
+
+ - Linux open-source community
 
 

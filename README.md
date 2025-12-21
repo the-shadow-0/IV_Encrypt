@@ -60,3 +60,15 @@ Or open an image directly:
 ```bash
 ./iv_encrypt image.jpg
 ```
+
+How It Works :
+
+    Metadata is read and written using exiftool
+
+Messages are encrypted using libsodium
+
+Encrypted data is embedded in image pixels (LSB steganography)
+
+The resulting image looks normal but contains hidden data
+
+Without the password, the message cannot be decrypted

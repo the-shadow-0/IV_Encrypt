@@ -4,7 +4,7 @@
 
 **Lightweight Linux image viewer · metadata editor · encrypted steganography** 
 *With love for the Linux community.*
-<br/>
+
 </div>
 
 ---

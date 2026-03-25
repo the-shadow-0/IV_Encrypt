@@ -43,10 +43,13 @@ typedef struct {
     GtkWidget *btn_encrypt;
     GtkWidget *btn_decrypt;
     GtkWidget *btn_open;
+    GtkWidget *btn_save_as;
     GtkWidget *btn_zoom_in;
     GtkWidget *btn_zoom_out;
     GtkWidget *btn_zoom_reset;
     GtkWidget *status_label;
+    GtkWidget *payload_indicator;
+    gboolean pw_visible;
     gchar *current_file;
     GdkPixbuf *orig_pixbuf;
     double zoom;
@@ -502,6 +505,44 @@ static void on_save_metadata_clicked(GtkButton *btn, gpointer userdata) {
     g_thread_unref(t);
 }
 
+static void load_image(AppState *s, const char *filename) {
+    if (!filename) return;
+    if (s->current_file) g_free(s->current_file);
+    s->current_file = g_strdup(filename);
+    s->zoom = 1.0;
+    if (s->orig_pixbuf) { g_object_unref(s->orig_pixbuf); s->orig_pixbuf = NULL; }
+
+    GError *err = NULL;
+    GdkPixbuf *pix = gdk_pixbuf_new_from_file(filename, &err);
+    if (!pix) {
+        show_error_dialog(GTK_WINDOW(s->window), "Load error", err ? err->message : "Failed to load image");
+        if (err) g_error_free(err);
+        gtk_label_set_markup(GTK_LABEL(s->payload_indicator), "<span foreground='#a5adcb'>No Image Loaded</span>");
+    } else {
+        s->orig_pixbuf = pix;
+        update_display_scaled(s);
+        
+        uint8_t header[HEADER_OVERHEAD];
+        memset(header, 0, sizeof(header));
+        if (extract_payload_from_pixbuf(pix, header, HEADER_OVERHEAD) == 0 && memcmp(header, STEG_MAGIC, STEG_MAGIC_LEN) == 0) {
+            gtk_label_set_markup(GTK_LABEL(s->payload_indicator), "<span foreground='#a6da95' weight='bold'>🔒 Payload Detected</span>");
+        } else {
+            gtk_label_set_markup(GTK_LABEL(s->payload_indicator), "<span foreground='#a5adcb'>No Payload Detected</span>");
+        }
+
+        GError *gerr = NULL;
+        char *json = read_metadata_json_with_exiftool(filename, &gerr);
+        if (json) {
+            GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
+            gtk_text_buffer_set_text(mbuf, json, -1);
+            g_free(json);
+        } else if (gerr) {
+            show_error_dialog(GTK_WINDOW(s->window), "exiftool error", gerr->message);
+            g_error_free(gerr);
+        }
+    }
+}
+
 static void on_open_clicked(GtkButton *btn, gpointer userdata) {
     AppState *s = (AppState*)userdata;
     GtkWidget *chooser = gtk_file_chooser_dialog_new("Open image", GTK_WINDOW(s->window),
@@ -512,29 +553,138 @@ static void on_open_clicked(GtkButton *btn, gpointer userdata) {
     if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
         char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
         if (filename) {
-            if (s->current_file) g_free(s->current_file);
-            s->current_file = g_strdup(filename);
-            s->zoom = 1.0;
-            if (s->orig_pixbuf) { g_object_unref(s->orig_pixbuf); s->orig_pixbuf = NULL; }
+            load_image(s, filename);
+            g_free(filename);
+        }
+    }
+    gtk_widget_destroy(chooser);
+}
 
-            GError *err = NULL;
-            GdkPixbuf *pix = gdk_pixbuf_new_from_file(filename, &err);
-            if (!pix) {
-                show_error_dialog(GTK_WINDOW(s->window), "Load error", err ? err->message : "Failed to load image");
-                if (err) g_error_free(err);
+static void on_drag_data_received(GtkWidget *widget, GdkDragContext *context, gint x, gint y,
+                                  GtkSelectionData *data, guint info, guint time, gpointer userdata) {
+    AppState *s = (AppState*)userdata;
+    gchar **uris = gtk_selection_data_get_uris(data);
+    if (uris && uris[0]) {
+        gchar *filename = g_filename_from_uri(uris[0], NULL, NULL);
+        if (filename) {
+            load_image(s, filename);
+            g_free(filename);
+        }
+    }
+    if (uris) g_strfreev(uris);
+    gtk_drag_finish(context, TRUE, FALSE, time);
+}
+
+static void on_copy_message_clicked(GtkButton *btn, gpointer userdata) {
+    AppState *s = (AppState*)userdata;
+    GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->message_text));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(mbuf, &start, &end);
+    gchar *text = gtk_text_buffer_get_text(mbuf, &start, &end, FALSE);
+    if (text && strlen(text) > 0) {
+        GtkClipboard *clip = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+        gtk_clipboard_set_text(clip, text, -1);
+        show_info_dialog(GTK_WINDOW(s->window), "Copied", "Message copied to clipboard.");
+    }
+    if (text) g_free(text);
+}
+
+static void on_clear_metadata_clicked(GtkButton *btn, gpointer userdata) {
+    AppState *s = (AppState*)userdata;
+    if (!s || !s->current_file) {
+        show_colored_message_dialog(GTK_WINDOW(s->window), "Error", "No image loaded.", "#ed8796", TRUE);
+        return;
+    }
+    
+    GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(s->window), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO, "Are you sure you want to strip all metadata from this image?");
+    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+    if (response != GTK_RESPONSE_YES) return;
+
+    gchar *argv[] = { "exiftool", "-all=", "-overwrite_original", (gchar*)s->current_file, NULL };
+    gchar *stderr_data = NULL;
+    int exit_status = 0;
+    gboolean ok = g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
+                              NULL, &stderr_data, &exit_status, NULL);
+                              
+    if (!ok || exit_status != 0) {
+        show_colored_message_dialog(GTK_WINDOW(s->window), "exiftool error", stderr_data ? stderr_data : "Failed to clear metadata", "#ed8796", TRUE);
+    } else {
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
+        gtk_text_buffer_set_text(buf, "{}\n", -1);
+        show_colored_message_dialog(GTK_WINDOW(s->window), "Cleared", "All metadata removed from image.", "#a6da95", FALSE);
+    }
+    if (stderr_data) g_free(stderr_data);
+}
+
+static void on_toggle_pw_clicked(GtkButton *btn, gpointer userdata) {
+    AppState *s = (AppState*)userdata;
+    s->pw_visible = !s->pw_visible;
+    gtk_entry_set_visibility(GTK_ENTRY(s->password_entry), s->pw_visible);
+    gtk_button_set_image(GTK_BUTTON(btn), gtk_image_new_from_icon_name(s->pw_visible ? "eye-not-looking-symbolic" : "eye-open-symbolic", GTK_ICON_SIZE_BUTTON));
+}
+
+static void on_export_message_clicked(GtkButton *btn, gpointer userdata) {
+    AppState *s = (AppState*)userdata;
+    GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->message_text));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(mbuf, &start, &end);
+    gchar *text = gtk_text_buffer_get_text(mbuf, &start, &end, FALSE);
+    if (!text || strlen(text) == 0) {
+        show_error_dialog(GTK_WINDOW(s->window), "Error", "No message to export.");
+        if (text) g_free(text);
+        return;
+    }
+    GtkWidget *chooser = gtk_file_chooser_dialog_new("Export Message", GTK_WINDOW(s->window),
+                                                     GTK_FILE_CHOOSER_ACTION_SAVE,
+                                                     "_Cancel", GTK_RESPONSE_CANCEL,
+                                                     "_Save", GTK_RESPONSE_ACCEPT, NULL);
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), "extracted_message.txt");
+    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        if (filename) {
+            FILE *f = fopen(filename, "w");
+            if (f) { fputs(text, f); fclose(f); show_info_dialog(GTK_WINDOW(s->window), "Exported", "Message saved successfully."); }
+            else { show_error_dialog(GTK_WINDOW(s->window), "Save error", "Failed to write file."); }
+            g_free(filename);
+        }
+    }
+    gtk_widget_destroy(chooser);
+    g_free(text);
+}
+
+static void on_save_as_clicked(GtkButton *btn, gpointer userdata) {
+    AppState *s = (AppState*)userdata;
+    if (!s->orig_pixbuf) { show_error_dialog(GTK_WINDOW(s->window), "Error", "No image loaded to save."); return; }
+    GtkWidget *chooser = gtk_file_chooser_dialog_new("Save Image As", GTK_WINDOW(s->window),
+                                                     GTK_FILE_CHOOSER_ACTION_SAVE,
+                                                     "_Cancel", GTK_RESPONSE_CANCEL,
+                                                     "_Save", GTK_RESPONSE_ACCEPT, NULL);
+    char *def_name = make_steg_filename(s->current_file);
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), def_name ? def_name : "image_saved.png");
+    if (def_name) g_free(def_name);
+    
+    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        if (filename) {
+            GError *gerr = NULL;
+            if (!gdk_pixbuf_save(s->orig_pixbuf, filename, "png", &gerr, NULL)) {
+                show_error_dialog(GTK_WINDOW(s->window), "Save error", gerr ? gerr->message : "Failed to save image");
+                if (gerr) g_error_free(gerr);
             } else {
-                s->orig_pixbuf = pix;
-                update_display_scaled(s);
-                GError *gerr = NULL;
-                char *json = read_metadata_json_with_exiftool(filename, &gerr);
-                if (json) {
-                    GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
-                    gtk_text_buffer_set_text(mbuf, json, -1);
-                    g_free(json);
-                } else if (gerr) {
-                    show_error_dialog(GTK_WINDOW(s->window), "exiftool error", gerr->message);
-                    g_error_free(gerr);
+                GtkTextBuffer *meta_buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
+                GtkTextIter mstart, mend;
+                gtk_text_buffer_get_bounds(meta_buf, &mstart, &mend);
+                gchar *meta_text = gtk_text_buffer_get_text(meta_buf, &mstart, &mend, FALSE);
+                if (meta_text && strlen(meta_text) > 0 && strcmp(meta_text, "{}\n") != 0) {
+                    write_metadata_json_to_image(meta_text, filename, NULL);
                 }
+                if (meta_text) g_free(meta_text);
+                
+                if (s->current_file) g_free(s->current_file);
+                s->current_file = g_strdup(filename);
+                show_info_dialog(GTK_WINDOW(s->window), "Saved", "Image saved successfully.");
+                update_display_scaled(s);
             }
             g_free(filename);
         }
@@ -582,50 +732,65 @@ static void on_embed_clicked(GtkButton *btn, gpointer userdata) {
         return;
     }
 
-    char *stegfile = make_steg_filename(s->current_file);
-    GError *gerr = NULL;
-    if (!gdk_pixbuf_save(copy, stegfile, "png", &gerr, NULL)) {
-        free(payload);
-        g_object_unref(copy);
-        show_error_dialog(GTK_WINDOW(s->window), "Save error", gerr ? gerr->message : "Failed to save steg file");
-        if (gerr) g_error_free(gerr);
-        g_free(stegfile);
-        return;
-    }
+    GtkWidget *chooser = gtk_file_chooser_dialog_new("Save Stego Image As", GTK_WINDOW(s->window),
+                                                     GTK_FILE_CHOOSER_ACTION_SAVE,
+                                                     "_Cancel", GTK_RESPONSE_CANCEL,
+                                                     "_Save", GTK_RESPONSE_ACCEPT, NULL);
+    char *def_name = make_steg_filename(s->current_file);
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), def_name ? def_name : "stego_image.png");
+    if (def_name) g_free(def_name);
 
-    GtkTextBuffer *meta_buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
-    GtkTextIter mstart, mend;
-    gtk_text_buffer_get_bounds(meta_buf, &mstart, &mend);
-    gchar *meta_text = gtk_text_buffer_get_text(meta_buf, &mstart, &mend, FALSE);
+    if (gtk_dialog_run(GTK_DIALOG(chooser)) == GTK_RESPONSE_ACCEPT) {
+        char *stegfile = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        if (stegfile) {
+            GError *gerr = NULL;
+            if (!gdk_pixbuf_save(copy, stegfile, "png", &gerr, NULL)) {
+                free(payload);
+                g_object_unref(copy);
+                show_error_dialog(GTK_WINDOW(s->window), "Save error", gerr ? gerr->message : "Failed to save steg file");
+                if (gerr) g_error_free(gerr);
+                g_free(stegfile);
+                gtk_widget_destroy(chooser);
+                return;
+            }
 
-    char *exif_err = NULL;
-    if (meta_text && strlen(meta_text) > 0) {
-        if (write_metadata_json_to_image(meta_text, stegfile, &exif_err) != 0) {
-            show_error_dialog(GTK_WINDOW(s->window), "exiftool error", exif_err ? exif_err : "Failed to write metadata to steg file");
-            if (exif_err) g_free(exif_err);
+            GtkTextBuffer *meta_buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
+            GtkTextIter mstart, mend;
+            gtk_text_buffer_get_bounds(meta_buf, &mstart, &mend);
+            gchar *meta_text = gtk_text_buffer_get_text(meta_buf, &mstart, &mend, FALSE);
+
+            char *exif_err = NULL;
+            if (meta_text && strlen(meta_text) > 0) {
+                if (write_metadata_json_to_image(meta_text, stegfile, &exif_err) != 0) {
+                    show_error_dialog(GTK_WINDOW(s->window), "exiftool error", exif_err ? exif_err : "Failed to write metadata to steg file");
+                    if (exif_err) g_free(exif_err);
+                }
+            }
+            if (meta_text) g_free(meta_text);
+
+            free(payload);
+            g_object_unref(copy);
+
+            if (s->current_file) g_free(s->current_file);
+            s->current_file = g_strdup(stegfile);
+            s->zoom = 1.0;
+            if (s->orig_pixbuf) { g_object_unref(s->orig_pixbuf); s->orig_pixbuf = NULL; }
+            GError *err = NULL;
+            GdkPixbuf *pix = gdk_pixbuf_new_from_file(stegfile, &err);
+            if (!pix) {
+                show_error_dialog(GTK_WINDOW(s->window), "Load error", err ? err->message : "Failed to load steg image");
+                if (err) g_error_free(err);
+            } else {
+                s->orig_pixbuf = pix;
+                update_display_scaled(s);
+                gtk_label_set_markup(GTK_LABEL(s->payload_indicator), "<span foreground='#a6da95' weight='bold'>🔒 Payload Detected</span>");
+            }
+
+            // show_info_dialog(GTK_WINDOW(s->window), "Done", stegfile);
+            g_free(stegfile);
         }
     }
-    if (meta_text) g_free(meta_text);
-
-    free(payload);
-    g_object_unref(copy);
-
-    if (s->current_file) g_free(s->current_file);
-    s->current_file = g_strdup(stegfile);
-    s->zoom = 1.0;
-    if (s->orig_pixbuf) { g_object_unref(s->orig_pixbuf); s->orig_pixbuf = NULL; }
-    GError *err = NULL;
-    GdkPixbuf *pix = gdk_pixbuf_new_from_file(stegfile, &err);
-    if (!pix) {
-        show_error_dialog(GTK_WINDOW(s->window), "Load error", err ? err->message : "Failed to load steg image");
-        if (err) g_error_free(err);
-    } else {
-        s->orig_pixbuf = pix;
-        update_display_scaled(s);
-    }
-
-    show_info_dialog(GTK_WINDOW(s->window), "Done", stegfile);
-    g_free(stegfile);
+    gtk_widget_destroy(chooser);
 }
 
 static void on_extract_clicked(GtkButton *btn, gpointer userdata) {
@@ -707,13 +872,25 @@ static void on_zoom_reset_clicked(GtkButton *btn, gpointer userdata) {
 static void apply_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     const char *css =
-        "window { background-color: #0b1220; color: #f9fafcff; }\n"
-        "headerbar { background-color: #091226; color: #ffffffff; padding: 6px; }\n"
-        "label { color: #f5fafdff; }\n"
-        "button { background-color: #1c1e1fff !important; border-radius: 8px; padding: 6px 10px; }\n"
-        "button label, button GtkLabel { color: #0b1720 !important; font-weight: 700 !important; }\n"
-        "textview { background-color: #e2e5e9ff; color: #f6f8fcff; border-radius: 6px; padding: 6px; }\n"
-        "textview.mono { font-family: monospace; }\n";
+        "window { background-color: #24273a; color: #cad3f5; }\n"
+        "headerbar { background-color: #1e2030; color: #cad3f5; padding: 10px; border-bottom: 2px solid #181926; }\n"
+        "label { color: #cad3f5; }\n"
+        "button { background-image: none; background-color: #363a4f; color: #cad3f5; border: 1px solid #181926; border-radius: 8px; padding: 8px 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease-in-out; }\n"
+        "button:hover { background-color: #494d64; }\n"
+        "button:active { background-color: #5b6078; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3); }\n"
+        "button.success { background-color: #a6da95; color: #1e2030; }\n"
+        "button.success:hover { background-color: #b7ebd8; }\n"
+        "button.warning { background-color: #c6a0f6; color: #1e2030; }\n"
+        "button.warning:hover { background-color: #d7bcfb; }\n"
+        "button.danger { background-color: #ed8796; color: #1e2030; }\n"
+        "button.danger:hover { background-color: #fca7ba; }\n"
+        "button.primary { background-color: #8aadf4; color: #1e2030; }\n"
+        "button.primary:hover { background-color: #9cd1fb; }\n"
+        "textview { background-color: #1e2030; color: #a5adcb; border: 1px solid #181926; border-radius: 8px; padding: 10px; }\n"
+        "entry { background-color: #1e2030; color: #cad3f5; border: 1px solid #181926; border-radius: 6px; padding: 6px; }\n"
+        "textview.mono, entry { font-family: monospace; }\n"
+        "separator { background-color: #363a4f; }\n"
+        "paned separator { background-color: #363a4f; min-width: 4px; }\n";
     gtk_css_provider_load_from_data(provider, css, -1, NULL);
     GdkScreen *screen = gdk_screen_get_default();
     gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -766,12 +943,12 @@ static AppState *app_state_new(void) {
     gtk_container_add(GTK_CONTAINER(s->window), root);
     gtk_container_set_border_width(GTK_CONTAINER(root), 10);
 
-    GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_box_pack_start(GTK_BOX(root), hbox, TRUE, TRUE, 0);
+    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_pack_start(GTK_BOX(root), paned, TRUE, TRUE, 0);
 
     GtkWidget *left_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_size_request(left_vbox, 460, -1);
-    gtk_box_pack_start(GTK_BOX(hbox), left_vbox, FALSE, FALSE, 0);
+    gtk_widget_set_size_request(left_vbox, 400, -1);
+    gtk_paned_pack1(GTK_PANED(paned), left_vbox, FALSE, TRUE);
 
     GtkWidget *meta_label = gtk_label_new(NULL);
     gtk_label_set_markup(GTK_LABEL(meta_label), "<span size='large' weight='bold'>Metadata (JSON)</span>");
@@ -786,10 +963,23 @@ static AppState *app_state_new(void) {
     gtk_container_add(GTK_CONTAINER(meta_scroll), s->metadata_text);
     gtk_box_pack_start(GTK_BOX(left_vbox), meta_scroll, FALSE, FALSE, 0);
 
+    GtkWidget *meta_btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(left_vbox), meta_btn_box, FALSE, FALSE, 0);
+
     s->btn_save_meta = gtk_button_new_with_label("Save metadata");
+    gtk_button_set_image(GTK_BUTTON(s->btn_save_meta), gtk_image_new_from_icon_name("document-save-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_save_meta), TRUE);
     gtk_widget_set_tooltip_text(s->btn_save_meta, "Write edited metadata JSON back into the image (exiftool)");
     gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_save_meta), "primary");
-    gtk_box_pack_start(GTK_BOX(left_vbox), s->btn_save_meta, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(meta_btn_box), s->btn_save_meta, TRUE, TRUE, 0);
+
+    GtkWidget *btn_clear_meta = gtk_button_new_with_label("Clear Metadata");
+    gtk_button_set_image(GTK_BUTTON(btn_clear_meta), gtk_image_new_from_icon_name("edit-clear-all-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(btn_clear_meta), TRUE);
+    gtk_widget_set_tooltip_text(btn_clear_meta, "Remove all metadata from the image immediately");
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_clear_meta), "danger");
+    gtk_box_pack_start(GTK_BOX(meta_btn_box), btn_clear_meta, TRUE, TRUE, 0);
+    g_signal_connect(btn_clear_meta, "clicked", G_CALLBACK(on_clear_metadata_clicked), s);
 
     GtkWidget *sep = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_box_pack_start(GTK_BOX(left_vbox), sep, FALSE, FALSE, 6);
@@ -806,29 +996,67 @@ static AppState *app_state_new(void) {
     gtk_container_add(GTK_CONTAINER(msg_scroll), s->message_text);
     gtk_box_pack_start(GTK_BOX(left_vbox), msg_scroll, FALSE, FALSE, 0);
 
+    GtkWidget *msg_btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(left_vbox), msg_btn_box, FALSE, FALSE, 0);
+
+    GtkWidget *btn_copy = gtk_button_new_with_label("Copy...");
+    gtk_button_set_image(GTK_BUTTON(btn_copy), gtk_image_new_from_icon_name("edit-copy-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(btn_copy), TRUE);
+    gtk_box_pack_start(GTK_BOX(msg_btn_box), btn_copy, TRUE, TRUE, 0);
+    g_signal_connect(btn_copy, "clicked", G_CALLBACK(on_copy_message_clicked), s);
+
+    GtkWidget *btn_export = gtk_button_new_with_label("Export...");
+    gtk_button_set_image(GTK_BUTTON(btn_export), gtk_image_new_from_icon_name("document-save-as-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(btn_export), TRUE);
+    gtk_box_pack_start(GTK_BOX(msg_btn_box), btn_export, TRUE, TRUE, 0);
+    g_signal_connect(btn_export, "clicked", G_CALLBACK(on_export_message_clicked), s);
+
     GtkWidget *pw_label = gtk_label_new("Password for (Encrypt/Decrypt):");
     gtk_box_pack_start(GTK_BOX(left_vbox), pw_label, FALSE, FALSE, 0);
+    
+    GtkWidget *pw_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_box_pack_start(GTK_BOX(left_vbox), pw_box, FALSE, FALSE, 0);
+
     s->password_entry = gtk_entry_new();
     gtk_entry_set_visibility(GTK_ENTRY(s->password_entry), FALSE);
-    gtk_box_pack_start(GTK_BOX(left_vbox), s->password_entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(pw_box), s->password_entry, TRUE, TRUE, 0);
+
+    GtkWidget *btn_toggle_pw = gtk_button_new();
+    gtk_button_set_image(GTK_BUTTON(btn_toggle_pw), gtk_image_new_from_icon_name("eye-not-looking-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_box_pack_start(GTK_BOX(pw_box), btn_toggle_pw, FALSE, FALSE, 0);
+    g_signal_connect(btn_toggle_pw, "clicked", G_CALLBACK(on_toggle_pw_clicked), s);
 
     GtkWidget *action_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_box_pack_start(GTK_BOX(left_vbox), action_row, FALSE, FALSE, 0);
 
     s->btn_encrypt = gtk_button_new_with_label("Encrypt");
+    gtk_button_set_image(GTK_BUTTON(s->btn_encrypt), gtk_image_new_from_icon_name("security-high-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_encrypt), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_encrypt), "warning");
     gtk_box_pack_start(GTK_BOX(action_row), s->btn_encrypt, TRUE, TRUE, 0);
 
     s->btn_decrypt = gtk_button_new_with_label("Decrypt");
+    gtk_button_set_image(GTK_BUTTON(s->btn_decrypt), gtk_image_new_from_icon_name("security-medium-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_decrypt), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_decrypt), "success");
     gtk_box_pack_start(GTK_BOX(action_row), s->btn_decrypt, TRUE, TRUE, 0);
 
-    s->btn_open = gtk_button_new_with_label("Open");
-    gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_open), "icon");
-    gtk_box_pack_start(GTK_BOX(left_vbox), s->btn_open, FALSE, FALSE, 0);
+    GtkWidget *img_btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(left_vbox), img_btn_box, FALSE, FALSE, 0);
+
+    s->btn_open = gtk_button_new_with_label("Open Image");
+    gtk_button_set_image(GTK_BUTTON(s->btn_open), gtk_image_new_from_icon_name("document-open-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_open), TRUE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_open), "primary");
+    gtk_box_pack_start(GTK_BOX(img_btn_box), s->btn_open, TRUE, TRUE, 0);
+
+    s->btn_save_as = gtk_button_new_with_label("Save As...");
+    gtk_button_set_image(GTK_BUTTON(s->btn_save_as), gtk_image_new_from_icon_name("document-save-as-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_save_as), TRUE);
+    gtk_box_pack_start(GTK_BOX(img_btn_box), s->btn_save_as, TRUE, TRUE, 0);
 
     GtkWidget *right_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_box_pack_start(GTK_BOX(hbox), right_vbox, TRUE, TRUE, 0);
+    gtk_paned_pack2(GTK_PANED(paned), right_vbox, TRUE, TRUE);
 
     s->image_scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(s->image_scroll), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
@@ -843,22 +1071,39 @@ static AppState *app_state_new(void) {
     gtk_box_pack_start(GTK_BOX(right_vbox), zoom_row, FALSE, FALSE, 0);
 
     s->btn_zoom_in = gtk_button_new_with_label("Zoom In");
+    gtk_button_set_image(GTK_BUTTON(s->btn_zoom_in), gtk_image_new_from_icon_name("zoom-in-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_zoom_in), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_zoom_in), "icon");
     gtk_box_pack_start(GTK_BOX(zoom_row), s->btn_zoom_in, FALSE, FALSE, 0);
 
     s->btn_zoom_out = gtk_button_new_with_label("Zoom Out");
+    gtk_button_set_image(GTK_BUTTON(s->btn_zoom_out), gtk_image_new_from_icon_name("zoom-out-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_zoom_out), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_zoom_out), "icon");
     gtk_box_pack_start(GTK_BOX(zoom_row), s->btn_zoom_out, FALSE, FALSE, 0);
 
     s->btn_zoom_reset = gtk_button_new_with_label("Reset Zoom");
+    gtk_button_set_image(GTK_BUTTON(s->btn_zoom_reset), gtk_image_new_from_icon_name("zoom-original-symbolic", GTK_ICON_SIZE_BUTTON));
+    gtk_button_set_always_show_image(GTK_BUTTON(s->btn_zoom_reset), TRUE);
     gtk_style_context_add_class(gtk_widget_get_style_context(s->btn_zoom_reset), "icon");
     gtk_box_pack_start(GTK_BOX(zoom_row), s->btn_zoom_reset, FALSE, FALSE, 0);
 
-    s->status_label = gtk_label_new("No image loaded");
-    gtk_box_pack_start(GTK_BOX(root), s->status_label, FALSE, FALSE, 0);
+    GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_box_pack_start(GTK_BOX(root), status_box, FALSE, FALSE, 0);
+
+    s->payload_indicator = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(s->payload_indicator), "<span foreground='#a5adcb'>No Image Loaded</span>");
+    gtk_box_pack_start(GTK_BOX(status_box), s->payload_indicator, FALSE, FALSE, 0);
+
+    GtkWidget *sep_status = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+    gtk_box_pack_start(GTK_BOX(status_box), sep_status, FALSE, FALSE, 4);
+
+    s->status_label = gtk_label_new("Ready");
+    gtk_box_pack_start(GTK_BOX(status_box), s->status_label, FALSE, FALSE, 0);
 
     g_signal_connect(s->btn_save_meta, "clicked", G_CALLBACK(on_save_metadata_clicked), s);
     g_signal_connect(s->btn_open, "clicked", G_CALLBACK(on_open_clicked), s);
+    g_signal_connect(s->btn_save_as, "clicked", G_CALLBACK(on_save_as_clicked), s);
     g_signal_connect(s->btn_encrypt, "clicked", G_CALLBACK(on_embed_clicked), s);
     g_signal_connect(s->btn_decrypt, "clicked", G_CALLBACK(on_extract_clicked), s);
     g_signal_connect(s->btn_zoom_in, "clicked", G_CALLBACK(on_zoom_in_clicked), s);
@@ -868,13 +1113,17 @@ static AppState *app_state_new(void) {
     gtk_widget_set_tooltip_text(s->metadata_text, "Edit the full JSON metadata produced by exiftool. Save when ready.");
     gtk_widget_set_tooltip_text(s->message_text, "Message to encrypt and embed, or where extracted message appears.");
 
+    gtk_drag_dest_set(s->window, GTK_DEST_DEFAULT_ALL, NULL, 0, GDK_ACTION_COPY);
+    gtk_drag_dest_add_uri_targets(s->window);
+    g_signal_connect(s->window, "drag-data-received", G_CALLBACK(on_drag_data_received), s);
+
     apply_css();
 
     return s;
 }
 
 static void fix_button_labels_on_show(GtkWidget *window) {
-    force_all_button_label_colors(window, "#111827");
+    // Legacy function, replaced natively by CSS colors
 }
 
 int main(int argc, char **argv) {

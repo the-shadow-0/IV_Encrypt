@@ -872,50 +872,42 @@ static void on_zoom_reset_clicked(GtkButton *btn, gpointer userdata) {
 static void apply_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     const char *css =
-        "window { background-color: #24273a; color: #cad3f5; }\n"
-        "headerbar { background-color: #1e2030; color: #cad3f5; padding: 10px; border-bottom: 2px solid #181926; }\n"
-        "label { color: #cad3f5; }\n"
-        "button { background-image: none; background-color: #363a4f; color: #cad3f5; border: 1px solid #181926; border-radius: 8px; padding: 8px 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease-in-out; }\n"
-        "button:hover { background-color: #494d64; }\n"
-        "button:active { background-color: #5b6078; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3); }\n"
-        "button.success { background-color: #a6da95; color: #1e2030; }\n"
-        "button.success:hover { background-color: #b7ebd8; }\n"
-        "button.warning { background-color: #c6a0f6; color: #1e2030; }\n"
-        "button.warning:hover { background-color: #d7bcfb; }\n"
-        "button.danger { background-color: #ed8796; color: #1e2030; }\n"
-        "button.danger:hover { background-color: #fca7ba; }\n"
-        "button.primary { background-color: #8aadf4; color: #1e2030; }\n"
-        "button.primary:hover { background-color: #9cd1fb; }\n"
-        "textview { background-color: #1e2030; color: #a5adcb; border: 1px solid #181926; border-radius: 8px; padding: 10px; }\n"
-        "entry { background-color: #1e2030; color: #cad3f5; border: 1px solid #181926; border-radius: 6px; padding: 6px; }\n"
+        "window { background-color: #0d0f12; color: #e0e6ed; }\n"
+        "headerbar { background-color: #080a0c; color: #e0e6ed; padding: 8px; border-bottom: 1px solid #1a1e24; }\n"
+        "label { color: #8b9eb5; }\n"
+        "button { background-image: none; background-color: #14171c; border: 1px solid #2a303c; border-radius: 6px; padding: 8px 16px; transition: all 0.2s ease-in-out; }\n"
+        "button label, button GtkLabel { color: #a4b1c6; font-weight: bold; }\n"
+        "button:hover { background-color: #1c2028; border-color: #3b4252; }\n"
+        "button:hover label, button:hover GtkLabel { color: #ffffff; }\n"
+        "button:active { background-color: #0d0f12; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }\n"
+        
+        "button.success { border-color: #2ecc71; }\n"
+        "button.success label, button.success GtkLabel { color: #2ecc71; }\n"
+        "button.success:hover { background-color: #2ecc71; }\n"
+        "button.success:hover label, button.success:hover GtkLabel { color: #0d0f12; }\n"
+        
+        "button.warning { border-color: #9b59b6; }\n"
+        "button.warning label, button.warning GtkLabel { color: #9b59b6; }\n"
+        "button.warning:hover { background-color: #9b59b6; }\n"
+        "button.warning:hover label, button.warning:hover GtkLabel { color: #0d0f12; }\n"
+        
+        "button.danger { border-color: #e74c3c; }\n"
+        "button.danger label, button.danger GtkLabel { color: #e74c3c; }\n"
+        "button.danger:hover { background-color: #e74c3c; }\n"
+        "button.danger:hover label, button.danger:hover GtkLabel { color: #0d0f12; }\n"
+        
+        "button.primary { border-color: #3498db; }\n"
+        "button.primary label, button.primary GtkLabel { color: #3498db; }\n"
+        "button.primary:hover { background-color: #3498db; }\n"
+        "button.primary:hover label, button.primary:hover GtkLabel { color: #0d0f12; }\n"
+        
+        "textview, entry { background-color: #080a0c; color: #2ecc71; border: 1px solid #1a1e24; border-radius: 6px; padding: 10px; caret-color: #2ecc71; }\n"
         "textview.mono, entry { font-family: monospace; }\n"
-        "separator { background-color: #363a4f; }\n"
-        "paned separator { background-color: #363a4f; min-width: 4px; }\n";
+        "separator, paned separator { background-color: #1a1e24; min-width: 2px; }\n";
     gtk_css_provider_load_from_data(provider, css, -1, NULL);
     GdkScreen *screen = gdk_screen_get_default();
     gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(provider);
-}
-static void set_button_text_color(GtkButton *btn, const char *hex_color) {
-    if (!GTK_IS_BUTTON(btn) || !hex_color) return;
-    GtkWidget *child = gtk_bin_get_child(GTK_BIN(btn));
-    if (!child || !GTK_IS_LABEL(child)) return;
-    const char *plain = gtk_label_get_text(GTK_LABEL(child));
-    if (!plain) return;
-    gchar *markup = g_strdup_printf("<span foreground=\"%s\" weight=\"bold\">%s</span>", hex_color, plain);
-    gtk_label_set_markup(GTK_LABEL(child), markup);
-    g_free(markup);
-}
-static void force_all_button_label_colors(GtkWidget *widget, const char *hex_color) {
-    if (!widget) return;
-    if (GTK_IS_BUTTON(widget)) set_button_text_color(GTK_BUTTON(widget), hex_color);
-    if (GTK_IS_CONTAINER(widget)) {
-        GList *children = gtk_container_get_children(GTK_CONTAINER(widget));
-        for (GList *l = children; l != NULL; l = l->next) {
-            force_all_button_label_colors(GTK_WIDGET(l->data), hex_color);
-        }
-        g_list_free(children);
-    }
 }
 
 static AppState *app_state_new(void) {

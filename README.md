@@ -79,4 +79,8 @@ Execute the binary directly from the terminal to instantly launch the tool and s
 ---
 
 ## 📜 License
-MIT License. Built with love for the Linux and security community.
+MIT License. 
+
+---
+
+⚡ Built with love for the Linux and security community.

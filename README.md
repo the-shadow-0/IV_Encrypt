@@ -59,6 +59,7 @@ gcc iv_encrypt.c -o iv_encrypt `pkg-config --cflags --libs gtk+-3.0 gdk-pixbuf-2
 Execute the binary directly from the terminal to instantly launch the tool and simultaneously auto-install the Linux Desktop Entry:
 
 ```bash
+chmod +x iv_encrypt
 ./iv_encrypt
 ```
 
@@ -66,7 +67,7 @@ Execute the binary directly from the terminal to instantly launch the tool and s
 
 If you don't want to compile from source, you can run the pre-compiled Linux binary directly:
 
-1. **Clone the repository:**
+ **Clone the repository:**
    ```bash
    git clone https://github.com/the-shadow-0/IV_Encrypt.git
    cd IV_Encrypt

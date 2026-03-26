@@ -88,7 +88,7 @@ If you don't want to compile from source, you can run the pre-compiled Linux bin
 
 
 > [!CAUTION]
-> **Data Loss Warning:** IV_Encrypt uses advanced `libsodium` cryptographic hashing. If you lose your password, the ciphertext embedded within your image becomes permanently unrecoverable—even to the developer. Always maintain an offline, unmodified backup of your original raw images before encrypting them.
+> **Data Loss Warning:** IV_Encrypt uses advanced `libsodium` cryptographic hashing. If you lose your password, the ciphertext embedded within your image becomes permanently unrecoverable (even to the developer). Always maintain an offline, unmodified backup of your original raw images before encrypting them.
 
 
 ---

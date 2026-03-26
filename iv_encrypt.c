@@ -16,6 +16,8 @@
 #include <unistd.h>
 #include <errno.h>
 
+#include "icon_data.h"
+
 #define STEG_MAGIC "STEG"
 #define STEG_MAGIC_LEN 4
 #define SALT_LEN crypto_pwhash_SALTBYTES
@@ -78,11 +80,15 @@ static char *read_metadata_json_with_exiftool(const char *filename, GError **ger
     int exit_status = 0;
     gboolean ok = g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
                               &stdout_data, &stderr_data, &exit_status, NULL);
-    if (!ok || exit_status != 0 || !stdout_data) {
+    if (!ok || !stdout_data || strlen(stdout_data) == 0) {
         if (gerr) {
-            gchar buf[1024];
-            snprintf(buf, sizeof(buf), "exiftool failed (status=%d): %s", exit_status, stderr_data ? stderr_data : "(no stderr)");
-            *gerr = g_error_new(g_quark_from_string("exiftool"), exit_status, "%s", buf);
+            if (!ok && exit_status == 0) {
+                *gerr = g_error_new(g_quark_from_string("exiftool"), 0, "[\n  {\n    \"Warning\": \"ExifTool is not installed or not found in PATH. Metadata reading/writing disabled.\"\n  }\n]");
+            } else {
+                gchar buf[1024];
+                snprintf(buf, sizeof(buf), "[\n  {\n    \"Error\": \"exiftool failed: %s\"\n  }\n]", stderr_data ? stderr_data : "(no stderr)");
+                *gerr = g_error_new(g_quark_from_string("exiftool"), exit_status, "%s", buf);
+            }
         }
         if (stdout_data) g_free(stdout_data);
         if (stderr_data) g_free(stderr_data);
@@ -125,12 +131,12 @@ static int write_metadata_json_to_image(const char *json_text, const char *targe
     g_free(arg_json);
     if (stdout_data) g_free(stdout_data);
 
-    if (!ok || exit_status != 0) {
+    if (!ok) {
         if (stderr_data) {
             if (err_out) *err_out = g_strdup(stderr_data);
             g_free(stderr_data);
         } else if (err_out) {
-            *err_out = g_strdup_printf("exiftool failed with status %d", exit_status);
+            *err_out = g_strdup("ExifTool is missing or not installed properly.\nPlease run: sudo apt install libimage-exiftool-perl");
         }
         unlink(template);
         return -1;
@@ -457,10 +463,17 @@ static gboolean save_meta_finish(gpointer user_data) {
             GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
             gtk_text_buffer_set_text(buf, job->fresh_json, -1);
         }
-        show_colored_message_dialog(GTK_WINDOW(s->window), "Metadata written", "Metadata successfully written into image.", "#111827", FALSE);
+        gtk_label_set_markup(GTK_LABEL(s->status_label), "<span foreground='#a6da95'>Metadata successfully updated.</span>");
     } else {
         const char *em = job->err_msg ? job->err_msg : "Failed to write metadata.";
-        show_colored_message_dialog(GTK_WINDOW(s->window), "exiftool error", em, "#660000", TRUE);
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
+        
+        // Quick escape so error text doesn't break JSON parsing format
+        gchar *escaped = g_strescape(em, NULL);
+        gchar *warn = g_strdup_printf("[\n  {\n    \"Warning\": \"Metadata editing failed.\",\n    \"Reason\": \"%s\"\n  }\n]", escaped);
+        gtk_text_buffer_set_text(buf, warn, -1);
+        g_free(warn);
+        g_free(escaped);
     }
 
     if (job->json_text) g_free(job->json_text);
@@ -536,9 +549,10 @@ static void load_image(AppState *s, const char *filename) {
             GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
             gtk_text_buffer_set_text(mbuf, json, -1);
             g_free(json);
-        } else if (gerr) {
-            show_error_dialog(GTK_WINDOW(s->window), "exiftool error", gerr->message);
-            g_error_free(gerr);
+        } else {
+            GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
+            gtk_text_buffer_set_text(mbuf, gerr ? gerr->message : "{\n  \"Status\": \"No metadata available\"\n}\n", -1);
+            if (gerr) g_error_free(gerr);
         }
     }
 }
@@ -608,11 +622,13 @@ static void on_clear_metadata_clicked(GtkButton *btn, gpointer userdata) {
                               NULL, &stderr_data, &exit_status, NULL);
                               
     if (!ok || exit_status != 0) {
-        show_colored_message_dialog(GTK_WINDOW(s->window), "exiftool error", stderr_data ? stderr_data : "Failed to clear metadata", "#ed8796", TRUE);
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
+        gchar *warn = g_strdup_printf("{\n  \"Warning\": \"Failed to clear metadata natively.\",\n  \"Reason\": \"%s\"\n}\n", stderr_data ? stderr_data : "ExifTool missing");
+        gtk_text_buffer_set_text(buf, warn, -1);
+        g_free(warn);
     } else {
         GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(s->metadata_text));
-        gtk_text_buffer_set_text(buf, "{}\n", -1);
-        show_colored_message_dialog(GTK_WINDOW(s->window), "Cleared", "All metadata removed from image.", "#a6da95", FALSE);
+        gtk_text_buffer_set_text(buf, "{\n  \"Status\": \"Metadata Cleared\"\n}\n", -1);
     }
     if (stderr_data) g_free(stderr_data);
 }
@@ -917,19 +933,28 @@ static AppState *app_state_new(void) {
     s->zoom = 1.0;
 
     s->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    
+    GInputStream *stream = g_memory_input_stream_new_from_data(favicon_png, favicon_png_len, NULL);
+    GError *icon_err = NULL;
+    GdkPixbuf *icon = gdk_pixbuf_new_from_stream(stream, NULL, &icon_err);
+    if (icon) {
+        gtk_window_set_icon(GTK_WINDOW(s->window), icon);
+        g_object_unref(icon);
+    } else if (icon_err) {
+        g_error_free(icon_err);
+    }
+    g_object_unref(stream);
+    
     gtk_window_set_default_size(GTK_WINDOW(s->window), WINDOW_WIDTH, WINDOW_HEIGHT);
     gtk_window_set_resizable(GTK_WINDOW(s->window), FALSE);
     gtk_window_set_title(GTK_WINDOW(s->window), "IV_Encrypt");
 
     GtkWidget *header = gtk_header_bar_new();
     gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header), TRUE);
+    gtk_header_bar_set_decoration_layout(GTK_HEADER_BAR(header), ":minimize,close");
     gtk_header_bar_set_title(GTK_HEADER_BAR(header), "IV_Encrypt");
     gtk_header_bar_set_subtitle(GTK_HEADER_BAR(header), "Metadata • Stego");
     gtk_window_set_titlebar(GTK_WINDOW(s->window), header);
-
-    GtkWidget *min_btn = gtk_button_new_from_icon_name("window-minimize-symbolic", GTK_ICON_SIZE_BUTTON);
-    g_signal_connect_swapped(min_btn, "clicked", G_CALLBACK(gtk_window_iconify), s->window);
-    gtk_header_bar_pack_end(GTK_HEADER_BAR(header), min_btn);
 
     GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_container_add(GTK_CONTAINER(s->window), root);
@@ -1146,9 +1171,10 @@ int main(int argc, char **argv) {
                     GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(app->metadata_text));
                     gtk_text_buffer_set_text(mbuf, json, -1);
                     g_free(json);
-                } else if (gerr) {
-                    show_error_dialog(GTK_WINDOW(app->window), "exiftool error", gerr->message);
-                    g_error_free(gerr);
+                } else {
+                    GtkTextBuffer *mbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(app->metadata_text));
+                    gtk_text_buffer_set_text(mbuf, gerr ? gerr->message : "{\n  \"Status\": \"No metadata available\"\n}\n", -1);
+                    if (gerr) g_error_free(gerr);
                 }
             }
         } else {

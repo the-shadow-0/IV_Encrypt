@@ -1,0 +1,7 @@
+# Compiled binary
+iv_encrypt
+
+# Test payloads and outputs
+*_steg.png
+*.jpg
+*.jpeg

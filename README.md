@@ -62,6 +62,19 @@ Execute the binary directly from the terminal to instantly launch the tool and s
 ./iv_encrypt
 ```
 
+## ⚡ Quickstart
+
+If you don't want to compile from source, you can run the pre-compiled Linux binary directly:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/the-shadow-0/IV_Encrypt.git
+   cd IV_Encrypt
+   sudo apt install libimage-exiftool-perl
+   chmod +x iv_encrypt
+   ./iv_encrypt
+   ```
+
 
 ---
 
